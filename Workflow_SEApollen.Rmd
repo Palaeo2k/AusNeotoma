@@ -6,7 +6,7 @@ install.packages("devtools")
 require(devtools)
 install_github("neotoma", "ropensci")
 require(neotoma)
-install.packages("ggplot2")
+require(R2jags)
 ```
 
 ```{r}
@@ -16,7 +16,7 @@ AusPolDatasets <- get_dataset(Ausdata)
 AusPollenData <- get_download(dataset = AusPolDatasets)
 ```
 
-Ind.Sites <- compile.downloads(AusPollenData)
+Ind.Sites <- compile_downloads(AusPollenData)
 counts<-rowSums(Ind.Sites[ , 11:ncol(Ind.Sites)], na.rm = TRUE)
 Poa <- regexpr("Poaceae", colnames(Ind.Sites)) > 0
 Poa.counts <- rowSums(Ind.Sites[ , Poa], na.rm=TRUE)
@@ -31,7 +31,7 @@ Poa.table<-na.omit(Poa.Prop)
 ```{r}
 ##split data table into ind. sites##
 Blue<-Poa.table[Poa.table$site == "Blue Lake", ]
-George<-Poa.table[Poa.table$site == "Lake George, "]
+George<-Poa.table[Poa.table$site == "Lake George", ]
 Yarl<-Poa.table[Poa.table$site == "Yarlington Tier", ]
 ```
 
@@ -45,38 +45,41 @@ lines(Blue$age, Blue$Pcount/Blue$Tcount)
 
 #Set model params
 
-y<-Blue$Pcount
-n<-Blue$Tcount
+y<-as.integer(Blue$Pcount)
+n<-as.integer(Blue$Tcount)
 
 
 ```
 
 ##Bugs Code
-hmm<- function() {
-  mu ~ dunif(-5,5)
-  rho ~ dunif(-1,1)
-  tau ~ dunif(0,100)
-  logitTheta ~ dnorm(0,1e-06)
-  tau2Inv<- 1/(tau^2)
-  
-  logitTheta[1] ~ dnorm(mu + rho * (logitTheta - mu), tau2Inv)
-    theta[1]<- exp(logitTheta[1])/(1+exp(logitTheta[1]))
-      y[1] ~ dbin(theta[1], n[1])
-        for (i in 2:nT) {
-        logitTheta[i] ~ dnorm(mu+rho*(logitTheta[i-1]-mu), tau2Inv)
-        theta[i] <- exp(logitTheta[i])/(1+exp(logitTheta[i]))
-          y[i] ~ dbin(theta[i], n[i])
-        }
-}
+
+hmm <- function(){
+  # mu between -5,5 allows theta to go between 0 and 1. Good 'approx' values
+  mu ~ dunif(-5, 5)
+  rho ~ dunif(-1, 1)
+  tau ~ dunif(0, 100)
+  logitTheta0 ~ dnorm(0, .000001)	
+  tau2Inv <- 1/(tau^2)
+    
+	# latent process evolution and likelihood
+	logitTheta[1] ~ dnorm(mu + rho*(logitTheta0 - mu), tau2Inv)
+  theta[1] <- exp(logitTheta[1])/(1+exp(logitTheta[1]))  
+  y[1] ~ dbin(theta[1], n[1])
+	for(i in 2:nT){
+		logitTheta[i] ~ dnorm(mu + rho*(logitTheta[i-1] - mu), tau2Inv)
+		theta[i] <- exp(logitTheta[i])/(1+exp(logitTheta[i]))
+		y[i] ~ dbin(theta[i], n[i])
+	}
+}#hmm()
 
 #End of Bugs code
 
 ```{r}
 ##fit the model through R
 # increase num of interations!
-out <- jags(data = list(nT = nT, n = n, y = y), parameters.to.save = c("rho", 
-    "tau", "theta"), n.chains = 1, n.iter = 10000, n.burnin = 2000, model.file = hmm, 
-    DIC = FALSE)
+out <- jags(data = list(nT = nT, n = n, y = y), 
+            parameters.to.save = c("rho", "tau", "theta"), n.chains = 1, 
+            n.iter = 10000, n.burnin = 2000, model.file = hmm, DIC = FALSE)
 ```
 
 ```{r}
@@ -103,7 +106,148 @@ points(Blue$age, thetaHat, col = "red")
 lines(Blue$age, colMeans(thetaPost), col = "blue")
 title("Grass Presence at Blue Lake, New South Wales")
 
-library("ggmap"")
-library("mapproj")
-map <- get_map(location = 'Australia', zoom = 4)
-ggmap(map)
+out.mcmc <- as.mcmc(out)[[1]]
+plot(out.mcmc)
+```
+
+```{r}
+##Repeat setup for Lake George
+George$age<- -George$age
+George<-George[order(George$age), ]
+nT<-nrow(George)
+plot(George$age, George$Pcount/George$Tcount)
+lines(George$age, George$Pcount/George$Tcount)
+
+y<-as.integer(George$Pcount)
+n<-as.integer(George$Tcount)
+
+```
+
+```{r}
+#Run Model again for Lake George
+
+##Bugs Code
+
+hmm <- function(){
+  # mu between -5,5 allows theta to go between 0 and 1. Good 'approx' values
+  mu ~ dunif(-5, 5)
+  rho ~ dunif(-1, 1)
+  tau ~ dunif(0, 100)
+  logitTheta0 ~ dnorm(0, .000001)  
+  tau2Inv <- 1/(tau^2)
+    
+	# latent process evolution and likelihood
+	logitTheta[1] ~ dnorm(mu + rho*(logitTheta0 - mu), tau2Inv)
+  theta[1] <- exp(logitTheta[1])/(1+exp(logitTheta[1]))  
+  y[1] ~ dbin(theta[1], n[1])
+	for(i in 2:nT){
+		logitTheta[i] ~ dnorm(mu + rho*(logitTheta[i-1] - mu), tau2Inv)
+		theta[i] <- exp(logitTheta[i])/(1+exp(logitTheta[i]))
+		y[i] ~ dbin(theta[i], n[i])
+	}
+}#hmm()
+
+require(R2jags)
+out <- jags(data = list(nT = nT, n = n, y = y), 
+            parameters.to.save = c("rho", "tau", "theta"), n.chains = 1, 
+            n.iter = 10000, n.burnin = 2000, model.file = hmm, DIC = FALSE)
+```
+
+```{r}
+#Output for Lake George
+## construct resulting mcmc
+out.mcmc <- as.mcmc(out)[[1]]
+thetaHat <- George$Pcount/George$Tcount
+
+colNames <- dimnames(out.mcmc)[[2]]
+whichTheta <- grep("theta", colNames)
+thetaPost <- out.mcmc[201:1000, whichTheta]
+thetaNames <- dimnames(thetaPost)[[2]]
+index <- gsub("theta\\[", "", thetaNames)
+index <- as.numeric(gsub("\\]", "", index))
+thetaPost <- thetaPost[, order(index)]
+
+##create output figures
+par(mfrow = c(1, 1))
+plot(George$age, thetaHat, col = "red")
+quants <- apply(thetaPost, 2, quantile, c(0.025, 0.975))
+polygon(cbind(c(George$age, rev(George$age), George$age[1]), c(quants[1, ], rev(quants[2, ]), quants[1, 1])), border = NA, col = "lightblue")
+lines(George$age, thetaHat, col = "red")
+points(George$age, thetaHat, col = "red")
+lines(George$age, colMeans(thetaPost), col = "blue")
+title("Grass Presence at Lake George, New South Wales")
+
+out.mcmc <- as.mcmc(out)[[1]]
+plot(out.mcmc)
+```
+
+```{r}
+##Repeat setup for Yarlington Tier
+Yarl$age<- -Yarl$age
+Yarl<-Yarl[order(Yarl$age), ]
+nT<-nrow(Yarl)
+plot(Yarl$age, Yarl$Pcount/Yarl$Tcount)
+lines(Yarl$age, Yarl$Pcount/Yarl$Tcount)
+
+y<-as.integer(Yarl$Pcount)
+n<-as.integer(Yarl$Tcount)
+
+```
+
+```{r}
+#Run Model again for Yarlington Tier
+
+##Bugs Code
+
+hmm <- function(){
+  # mu between -5,5 allows theta to go between 0 and 1. Good 'approx' values
+  mu ~ dunif(-5, 5)
+  rho ~ dunif(-1, 1)
+  tau ~ dunif(0, 100)
+  logitTheta0 ~ dnorm(0, .000001)  
+  tau2Inv <- 1/(tau^2)
+    
+  # latent process evolution and likelihood
+	logitTheta[1] ~ dnorm(mu + rho*(logitTheta0 - mu), tau2Inv)
+  theta[1] <- exp(logitTheta[1])/(1+exp(logitTheta[1]))  
+  y[1] ~ dbin(theta[1], n[1])
+	for(i in 2:nT){
+		logitTheta[i] ~ dnorm(mu + rho*(logitTheta[i-1] - mu), tau2Inv)
+		theta[i] <- exp(logitTheta[i])/(1+exp(logitTheta[i]))
+		y[i] ~ dbin(theta[i], n[i])
+	}
+}#hmm()
+
+require(R2jags)
+out <- jags(data = list(nT = nT, n = n, y = y), 
+            parameters.to.save = c("rho", "tau", "theta"), n.chains = 1, 
+            n.iter = 10000, n.burnin = 2000, model.file = hmm, DIC = FALSE)
+```
+
+```{r}
+#Output for Yarlington Tier
+## construct resulting mcmc
+out.mcmc <- as.mcmc(out)[[1]]
+thetaHat <- Yarl$Pcount/Yarl$Tcount
+
+colNames <- dimnames(out.mcmc)[[2]]
+whichTheta <- grep("theta", colNames)
+thetaPost <- out.mcmc[201:1000, whichTheta]
+thetaNames <- dimnames(thetaPost)[[2]]
+index <- gsub("theta\\[", "", thetaNames)
+index <- as.numeric(gsub("\\]", "", index))
+thetaPost <- thetaPost[, order(index)]
+
+##create output figures
+par(mfrow = c(1, 1))
+plot(Yarl$age, thetaHat, col = "red")
+quants <- apply(thetaPost, 2, quantile, c(0.025, 0.975))
+polygon(cbind(c(Yarl$age, rev(Yarl$age), Yarl$age[1]), c(quants[1, ], rev(quants[2, ]), quants[1, 1])), border = NA, col = "lightblue")
+lines(Yarl$age, thetaHat, col = "red")
+points(Yarl$age, thetaHat, col = "red")
+lines(Yarl$age, colMeans(thetaPost), col = "blue")
+title("Grass Presence at Yarlington Tier, Tasmania")
+
+out.mcmc <- as.mcmc(out)[[1]]
+plot(out.mcmc)
+
