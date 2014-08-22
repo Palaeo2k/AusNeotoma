@@ -20,6 +20,7 @@ Ind.Sites <- compile.downloads(AusPollenData)
 counts<-rowSums(Ind.Sites[ , 11:ncol(Ind.Sites)], na.rm = TRUE)
 Poa <- regexpr("Poaceae", colnames(Ind.Sites)) > 0
 Poa.counts <- rowSums(Ind.Sites[ , Poa], na.rm=TRUE)
+Poa.counts2<-as.data.frame(Poa.counts)
 
 Ind.Sites["Poa.Counts"]<-Poa.counts2
 Ind.Sites["Total.Counts"]<-counts
