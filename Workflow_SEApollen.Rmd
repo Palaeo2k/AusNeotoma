@@ -1,0 +1,108 @@
+
+
+```{r} 
+## Install Neotoma for R and other required packages ##
+install.packages("devtools")
+require(devtools)
+install_github("neotoma", "ropensci")
+require(neotoma)
+install.packages("ggplot2")
+```
+
+```{r}
+## Pull datasets from Neotoma ##
+Ausdata <- get_site(loc = c(90,-80,179.9,0))
+AusPolDatasets <- get_dataset(Ausdata)
+AusPollenData <- get_download(dataset = AusPolDatasets)
+```
+
+Ind.Sites <- compile.downloads(AusPollenData)
+counts<-rowSums(Ind.Sites[ , 11:ncol(Ind.Sites)], na.rm = TRUE)
+Poa <- regexpr("Poaceae", colnames(Ind.Sites)) > 0
+Poa.counts <- rowSums(Ind.Sites[ , Poa], na.rm=TRUE)
+
+Ind.Sites["Poa.Counts"]<-Poa.counts2
+Ind.Sites["Total.Counts"]<-counts
+Poa.Prop<-(Ind.Sites[ ,221:222])
+
+Poa.Prop <- data.frame(site = Ind.Sites$sitename, age = Ind.Sites$age, Pcount = Ind.Sites$Poa.Counts, Tcount = Ind.Sites$Total.Counts)
+Poa.table<-na.omit(Poa.Prop)
+```{r}
+##split data table into ind. sites##
+Blue<-Poa.table[Poa.table$site == "Blue Lake", ]
+George<-Poa.table[Poa.table$site == "Lake George, "]
+Yarl<-Poa.table[Poa.table$site == "Yarlington Tier", ]
+```
+
+```{r}
+##Set up Blue Lake for model run
+Blue$age<- -Blue$age
+Blue<-Blue[order(Blue$age), ]
+nT<-nrow(Blue)
+plot(Blue$age, Blue$Pcount/Blue$Tcount)
+lines(Blue$age, Blue$Pcount/Blue$Tcount)
+
+#Set model params
+
+y<-Blue$Pcount
+n<-Blue$Tcount
+
+
+```
+
+##Bugs Code
+hmm<- function() {
+  mu ~ dunif(-5,5)
+  rho ~ dunif(-1,1)
+  tau ~ dunif(0,100)
+  logitTheta ~ dnorm(0,1e-06)
+  tau2Inv<- 1/(tau^2)
+  
+  logitTheta[1] ~ dnorm(mu + rho * (logitTheta - mu), tau2Inv)
+    theta[1]<- exp(logitTheta[1])/(1+exp(logitTheta[1]))
+      y[1] ~ dbin(theta[1], n[1])
+        for (i in 2:nT) {
+        logitTheta[i] ~ dnorm(mu+rho*(logitTheta[i-1]-mu), tau2Inv)
+        theta[i] <- exp(logitTheta[i])/(1+exp(logitTheta[i]))
+          y[i] ~ dbin(theta[i], n[i])
+        }
+}
+
+#End of Bugs code
+
+```{r}
+##fit the model through R
+# increase num of interations!
+out <- jags(data = list(nT = nT, n = n, y = y), parameters.to.save = c("rho", 
+    "tau", "theta"), n.chains = 1, n.iter = 10000, n.burnin = 2000, model.file = hmm, 
+    DIC = FALSE)
+```
+
+```{r}
+
+## construct resulting mcmc
+out.mcmc <- as.mcmc(out)[[1]]
+thetaHat <- Blue$Pcount/Blue$Tcount
+
+colNames <- dimnames(out.mcmc)[[2]]
+whichTheta <- grep("theta", colNames)
+thetaPost <- out.mcmc[201:1000, whichTheta]
+thetaNames <- dimnames(thetaPost)[[2]]
+index <- gsub("theta\\[", "", thetaNames)
+index <- as.numeric(gsub("\\]", "", index))
+thetaPost <- thetaPost[, order(index)]
+
+##create output figures
+par(mfrow = c(1, 1))
+plot(Blue$age, thetaHat, col = "red")
+quants <- apply(thetaPost, 2, quantile, c(0.025, 0.975))
+polygon(cbind(c(Blue$age, rev(Blue$age), Blue$age[1]), c(quants[1, ], rev(quants[2, ]), quants[1, 1])), border = NA, col = "lightblue")
+lines(Blue$age, thetaHat, col = "red")
+points(Blue$age, thetaHat, col = "red")
+lines(Blue$age, colMeans(thetaPost), col = "blue")
+title("Grass Presence at Blue Lake, New South Wales")
+
+library("ggmap"")
+library("mapproj")
+map <- get_map(location = 'Australia', zoom = 4)
+ggmap(map)
